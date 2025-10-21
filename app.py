@@ -545,8 +545,28 @@ async def _run_http():
     srv = uvicorn.Server(cfg)
     await srv.serve()
 
+async def _keep_render_awake():
+    url = os.environ.get("RENDER_EXTERNAL_URL")
+    if not url:
+        return
+    if not url.endswith("/"):
+        url = url + "/"
+    endpoint = url + "health"
+    timeout = aiohttp.ClientTimeout(total=10)
+    async with aiohttp.ClientSession(timeout=timeout) as s:
+        while True:
+            try:
+                await s.get(endpoint)
+            except Exception:
+                pass
+            await asyncio.sleep(240)
+
 async def main():
-    await asyncio.gather(_run_http(), bot.start(SETTINGS.token))
+    await asyncio.gather(
+        _run_http(),
+        _keep_render_awake(),
+        bot.start(SETTINGS.token),
+    )
 
 if __name__ == "__main__":
     asyncio.run(main())
