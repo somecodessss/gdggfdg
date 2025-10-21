@@ -1,11 +1,12 @@
-import os
+# app.py — top of file
+import os  # must be first, before any os.environ[...] usage
 
 CONFIG = {
-    "DISCORD_TOKEN": os.environ["DISCORD_TOKEN"],            # from Render env
-    "GUILD_ID": 1270144230525763697,
-    "ADMIN_ROLE_ID": 1415349148944699453,
+    "DISCORD_TOKEN": os.environ["DISCORD_TOKEN"],                 # from Render env
+    "GUILD_ID": 1270144230525763697,                              # or read from env if you prefer
+    "ADMIN_ROLE_ID": 1415349148944699453,                         # or read from env if you prefer
     "ROBLOX_UNIVERSE_ID": int(os.environ["ROBLOX_UNIVERSE_ID"]),  # from Render env
-    "ROBLOSECURITY": os.environ["ROBLOSECURITY"],            # from Render env
+    "ROBLOSECURITY": os.environ["ROBLOSECURITY"],                 # from Render env
     "TRACK_INTERVAL_SECONDS": 3,
     "SCAN_MAX_PAGES": 8,
     "SCAN_ITEM_LIMIT": 800,
