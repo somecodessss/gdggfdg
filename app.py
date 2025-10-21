@@ -1,27 +1,40 @@
-# app.py — top of file
-import os  # must be first, before any os.environ[...] usage
+# app.py  (Web Service mode: FastAPI health + Discord bot together)
 
-CONFIG = {
-    "DISCORD_TOKEN": os.environ["DISCORD_TOKEN"],                 # from Render env
-    "GUILD_ID": 1270144230525763697,                              # or read from env if you prefer
-    "ADMIN_ROLE_ID": 1415349148944699453,                         # or read from env if you prefer
-    "ROBLOX_UNIVERSE_ID": int(os.environ["ROBLOX_UNIVERSE_ID"]),  # from Render env
-    "ROBLOSECURITY": os.environ["ROBLOSECURITY"],                 # from Render env
-    "TRACK_INTERVAL_SECONDS": 3,
-    "SCAN_MAX_PAGES": 8,
-    "SCAN_ITEM_LIMIT": 800,
-    "COMMANDS_EPHEMERAL": True,
-}
-
+import os
 import asyncio
 import random
 from dataclasses import dataclass
 from typing import Optional, Any, AsyncIterator, List
 
+import aiohttp
 import discord
 from discord.ext import commands, tasks
 from discord import app_commands
-import aiohttp
+
+# --- tiny HTTP server for Render port check ---
+import uvicorn
+from fastapi import FastAPI
+
+api = FastAPI()
+
+@api.get("/health")
+async def health():
+    return {"ok": True}
+
+
+# ====================== CONFIG — from env ======================
+CONFIG = {
+    "DISCORD_TOKEN": os.environ["DISCORD_TOKEN"],                  # required
+    "GUILD_ID": 1270144230525763697,                              # or use int(os.getenv("GUILD_ID","0"))
+    "ADMIN_ROLE_ID": 1415349148944699453,                         # or use int(os.getenv("ADMIN_ROLE_ID","0"))
+    "ROBLOX_UNIVERSE_ID": int(os.environ["ROBLOX_UNIVERSE_ID"]),  # required
+    "ROBLOSECURITY": os.getenv("ROBLOSECURITY", ""),              # optional; empty to skip auth
+    "TRACK_INTERVAL_SECONDS": 3,
+    "SCAN_MAX_PAGES": 8,
+    "SCAN_ITEM_LIMIT": 800,
+    "COMMANDS_EPHEMERAL": True,
+}
+# ===============================================================
 
 
 def _to_int(v: Any) -> Optional[int]:
@@ -463,74 +476,7 @@ async def join(interaction: discord.Interaction, instance_id: str):
     await interaction.followup.send(f"[join:web]({web}) • [join:app]({app})", ephemeral=SETTINGS.ephemeral)
 
 
-_MEME_API_BASE = "https://meme-api.com/gimme"
-_SAFE_FALLBACK_GIFS = [
-    "https://media.tenor.com/9I7bVJfL2OIAAAAd/thumbs-up.gif",
-    "https://media.tenor.com/Mm4Q3KQ2i-4AAAAd/hype.gif",
-    "https://media.tenor.com/HL6m1q0wSSEAAAAd/party-parrot.gif",
-]
-
-
-@bot.tree.command(description="Random meme (optional subreddit)")
-@app_commands.describe(subreddit="Pick a subreddit (default: random)")
-async def meme(interaction: discord.Interaction, subreddit: Optional[str] = None):
-    await interaction.response.defer(ephemeral=SETTINGS.ephemeral, thinking=True)
-    url = _MEME_API_BASE + (f"/{subreddit}" if subreddit else "")
-    data = await _fetch_json(url)
-    if not data:
-        await interaction.followup.send("Couldn't fetch a meme right now.", ephemeral=SETTINGS.ephemeral)
-        return
-    if data.get("nsfw"):
-        await interaction.followup.send("NSFW meme skipped.", ephemeral=SETTINGS.ephemeral)
-        return
-    e = discord.Embed(title=data.get("title", "Meme"), url=data.get("postLink"), color=0x2b2d31)
-    if data.get("subreddit"):
-        e.set_footer(text=f"r/{data.get('subreddit')}")
-    if data.get("url"):
-        e.set_image(url=data["url"])
-    await interaction.followup.send(embed=e, ephemeral=SETTINGS.ephemeral)
-
-
-@bot.tree.command(description="Search a GIF without API keys (keyword→subreddits)")
-@app_commands.describe(query="Keyword, e.g., 'roblox', 'cat', 'dance'")
-async def gif(interaction: discord.Interaction, query: str):
-    await interaction.response.defer(ephemeral=SETTINGS.ephemeral, thinking=True)
-    keymap = {
-        "roblox": ["robloxmemes", "roblox"],
-        "cat": ["CatGifs", "catsstandingup", "KittenGifs"],
-        "dog": ["doggifs", "rarepuppers"],
-        "dance": ["DanceGifs", "HighQualityGifs"],
-        "fail": ["instant_regret", "holdmybeer"],
-        "german": ["Germany", "ich_iel"],
-        "meme": ["memes", "dankmemes", "wholesomememes"],
-        "reaction": ["reactiongifs", "HighQualityGifs"],
-    }
-    defaults = ["gif", "gifs", "reactiongifs", "HighQualityGifs", "memes", "dankmemes"]
-    subs = keymap.get(query.lower(), defaults)
-
-    async def try_sub(sub: str) -> Optional[dict]:
-        d = await _fetch_json(f"{_MEME_API_BASE}/{sub}")
-        if not d or d.get("nsfw"):
-            return None
-        url = (d.get("url") or "").lower()
-        if any(ext in url for ext in (".gif", ".mp4", ".gifv")):
-            return d
-        return None
-
-    tried = set()
-    for _ in range(8):
-        sub = random.choice(subs)
-        if sub in tried:
-            continue
-        tried.add(sub)
-        item = await try_sub(sub)
-        if item:
-            e = discord.Embed(title=item.get("title", "GIF"), url=item.get("postLink"), color=0x2b2d31)
-            e.set_footer(text=f"r/{item.get('subreddit', sub)}")
-            e.set_image(url=item.get("url"))
-            await interaction.followup.send(embed=e, ephemeral=SETTINGS.ephemeral)
-            return
-    await interaction.followup.send(random.choice(_SAFE_FALLBACK_GIFS), ephemeral=SETTINGS.ephemeral)
+# meme/gif endpoints omitted for brevity — keep as in your version
 
 
 rbxadmin = app_commands.Group(name="rbxadmin", description="Roblox admin controls")
@@ -592,5 +538,15 @@ async def on_ready():
     print(f"[ready] {bot.user} • commands: {len(bot.tree.get_commands())}")
 
 
+# ---------- main runner (IMPORTANT) ----------
+async def _run_http():
+    port = int(os.environ.get("PORT", "8000"))
+    cfg = uvicorn.Config(api, host="0.0.0.0", port=port, log_level="info")
+    srv = uvicorn.Server(cfg)
+    await srv.serve()
+
+async def main():
+    await asyncio.gather(_run_http(), bot.start(SETTINGS.token))
+
 if __name__ == "__main__":
-    bot.run(SETTINGS.token)
+    asyncio.run(main())
